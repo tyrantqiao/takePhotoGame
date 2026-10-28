@@ -1,6 +1,7 @@
 import './style.css';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { createParty } from './party-ui.js';
 
 const $ = id => document.getElementById(id);
 const viewport = $('viewport');
@@ -70,6 +71,7 @@ for(const x of [-.58,.58])for(const z of [-.5,.48])ball(turtle,'#a6b780',[x,.23,
 ball(turtle,'#b3c28d',[0,.64,1.04],[.36,.36,.42]);
 for(const x of [-.19,.19]){ball(turtle,'#333b29',[x,.75,1.373],[.045,.06,.025]);ball(turtle,'#ffffff',[x+.009,.77,1.393],[.012,.015,.009],10);ball(turtle,'#d7b59a',[x*1.3,.59,1.348],[.06,.035,.016]);}
 ball(turtle,'#a6b780',[0,.29,-.94],[.13,.12,.32]);
+let party;
 const keys=new Set();let currentModel='rabbit',currentPhoto=null,album=[];let capturing=false;
 try {const saved=JSON.parse(localStorage.getItem('wildframe-album')||'[]');if(Array.isArray(saved))album=saved.filter(p=>p&&typeof p.image==='string'&&p.image.startsWith('data:image/jpeg')&&typeof p.score==='number').slice(0,24);}catch{}
 $('albumCount').textContent=album.length;
@@ -84,26 +86,131 @@ function render(){renderer.render(scene,camera);}
 function resize(){const w=viewport.clientWidth,h=viewport.clientHeight;renderer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();render();}
 new ResizeObserver(resize).observe(viewport);
 reset();resize();
-function makeReferences(){const position=camera.position.clone(),target=controls.target.clone(),focal=Number($('zoom').value),aspect=camera.aspect;renderer.setSize(480,320,false);camera.aspect=1.5;for(const a of awards){camera.position.set(...a.pos);controls.target.set(...a.target);camera.lookAt(controls.target);setFocal(a.focal);render();const measured=metrics();a.x=measured.x;a.y=measured.y;a.size=measured.size;a.height=measured.height;a.image=renderer.domElement.toDataURL('image/jpeg',.82);}camera.position.copy(position);controls.target.copy(target);camera.aspect=aspect;setFocal(focal);controls.update();resize();$('awardCards').replaceChildren(...awards.map((a,i)=>{const b=document.createElement('button');b.className='award-card';b.innerHTML=`<img src="${a.image}" alt="${a.title}参考构图"><div><span class="tag">${a.tag}</span><h3>${a.title} <span>✳</span></h3><p>${a.description}</p></div><span class="award-arrow">↗</span>`;b.onclick=()=>{toast(`挑战：${a.title} · ${a.description}`);document.querySelectorAll('.award-card').forEach(c=>c.style.borderColor='');b.style.borderColor='#6e8759';};return b;}));}
+function makeReferences(){const model=rabbit.visible?rabbit:turtle;const modelPosition=model.position.clone(),modelRotation=model.rotation.clone();model.position.set(0,0,0);model.rotation.set(0,0,0);const position=camera.position.clone(),target=controls.target.clone(),focal=Number($('zoom').value),aspect=camera.aspect;renderer.setSize(480,320,false);camera.aspect=1.5;for(const a of awards){camera.position.set(...a.pos);controls.target.set(...a.target);camera.lookAt(controls.target);setFocal(a.focal);render();const measured=metrics();a.x=measured.x;a.y=measured.y;a.size=measured.size;a.height=measured.height;a.image=renderer.domElement.toDataURL('image/jpeg',.82);}model.position.copy(modelPosition);model.rotation.copy(modelRotation);camera.position.copy(position);controls.target.copy(target);camera.aspect=aspect;setFocal(focal);controls.update();resize();$('awardCards').replaceChildren(...awards.map((a,i)=>{const b=document.createElement('button');b.className='award-card';b.innerHTML=`<img src="${a.image}" alt="${a.title}参考构图"><div><span class="tag">${a.tag}</span><h3>${a.title} <span>✳</span></h3><p>${a.description}</p></div><span class="award-arrow">↗</span>`;b.onclick=()=>{toast(`挑战：${a.title} · ${a.description}`);document.querySelectorAll('.award-card').forEach(c=>c.style.borderColor='');b.style.borderColor='#6e8759';};return b;}));}
 makeReferences();
 $('zoom').oninput=e=>setFocal(Number(e.target.value));
 $('resetBtn').onclick=()=>{reset();toast('相机已回到初始位置');};
 $('gridBtn').onclick=()=>{const enabled=$('grid').hidden;$('grid').hidden=!enabled;$('gridBtn').setAttribute('aria-pressed',String(enabled));};
-document.querySelectorAll('.model').forEach(b=>b.onclick=()=>{currentModel=b.dataset.model;rabbit.visible=currentModel==='rabbit';turtle.visible=!rabbit.visible;document.querySelectorAll('.model').forEach(m=>m.classList.toggle('active',m===b));document.querySelector('.panel-heading>span:last-child').textContent=rabbit.visible?'01 / 02':'02 / 02';makeReferences();toast(`模特已切换为${rabbit.visible?'棉棉':'慢慢'}`);});
+function selectAnimal(animal) {
+  const changed = currentModel !== animal;
+  currentModel = animal;
+  rabbit.visible = animal === 'rabbit'; turtle.visible = !rabbit.visible;
+  document.querySelectorAll('.model').forEach(b => b.classList.toggle('active', b.dataset.model === animal));
+  document.querySelector('.panel-heading>span:last-child').textContent = rabbit.visible ? '01 / 02' : '02 / 02';
+  if (changed) makeReferences();
+}
+document.querySelectorAll('.model').forEach(b => b.onclick = () => {
+  if (party?.active) party.send({ type: 'animal', animal: b.dataset.model });
+  else { selectAnimal(b.dataset.model); toast(`模特已切换为${rabbit.visible ? '棉棉' : '慢慢'}`); }
+});
 let toastTimer;function toast(message){$('toast').textContent=message;$('toast').classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').classList.remove('show'),3200);}
 function metrics(){camera.updateMatrixWorld();const model=rabbit.visible?rabbit:turtle;const bounds=new THREE.Box3().setFromObject(model);const points=[];for(const x of [bounds.min.x,bounds.max.x])for(const y of [bounds.min.y,bounds.max.y])for(const z of [bounds.min.z,bounds.max.z])points.push(new THREE.Vector3(x,y,z).project(camera));const center=bounds.getCenter(new THREE.Vector3()).project(camera);const minX=Math.min(...points.map(p=>p.x)),maxX=Math.max(...points.map(p=>p.x)),minY=Math.min(...points.map(p=>p.y)),maxY=Math.max(...points.map(p=>p.y));const visible=center.z>-1&&center.z<1&&maxX>-1&&minX<1&&maxY>-1&&minY<1;const cropped=minX< -1||maxX>1||minY< -1||maxY>1;return{x:(center.x+1)/2,y:(1-center.y)/2,size:(maxY-minY)/2,height:camera.position.y,visible,cropped};}
-function evaluate(){const m=metrics();return awards.map(a=>{const composition=Math.max(0,100-Math.hypot(m.x-a.x,m.y-a.y)*170);const framing=Math.max(0,100-Math.abs(m.size-a.size)*160);const angle=Math.max(0,100-Math.abs(m.height-a.height)*17);let score=Math.round(composition*.43+framing*.4+angle*.17);if(m.cropped)score=Math.min(score,50);if(!m.visible)score=0;return{award:awards.indexOf(a),score,details:[Math.round(composition),Math.round(framing),Math.round(angle)],visible:m.visible,cropped:m.cropped};}).sort((a,b)=>b.score-a.score)[0];}
+function scoreMetrics(m, a) {
+  const composition = Math.max(0, 100 - Math.hypot(m.x - a.x, m.y - a.y) * 170);
+  const framing = Math.max(0, 100 - Math.abs(m.size - a.size) * 160);
+  const angle = Math.max(0, 100 - Math.abs(m.height - a.height) * 17);
+  let score = Math.round(composition * .43 + framing * .4 + angle * .17);
+  if (m.cropped) score = Math.min(score, 50);
+  if (!m.visible) score = 0;
+  return { award: awards.indexOf(a), score, details: [Math.round(composition), Math.round(framing), Math.round(angle)], visible: m.visible, cropped: m.cropped };
+}
+function evaluate(challenge) {
+  const m = metrics();
+  if (challenge !== undefined) return scoreMetrics(m, awards[challenge]);
+  return awards.map(a => scoreMetrics(m, a)).sort((a, b) => b.score - a.score)[0];
+}
+function applyPose(model, pose) {
+  model.position.set(pose.x, pose.pose === 'celebrate' ? .28 : 0, pose.z);
+  model.rotation.set(0, pose.yaw, pose.pose === 'lean' ? -.15 : 0);
+  model.updateMatrixWorld(true);
+}
+function scoreRemoteShot(shot, pose, challenge) {
+  const position = camera.position.clone(), quaternion = camera.quaternion.clone(), aspect = camera.aspect, fov = camera.fov;
+  const model = pose.animal === 'rabbit' ? rabbit : turtle;
+  const modelPosition = model.position.clone(), modelRotation = model.rotation.clone();
+  try {
+    camera.position.fromArray(shot.position); camera.quaternion.fromArray(shot.quaternion);
+    camera.aspect = 1.5; camera.fov = shot.fov; camera.updateProjectionMatrix();
+    applyPose(model, pose);
+    return evaluate(challenge).score;
+  } finally {
+    camera.position.copy(position); camera.quaternion.copy(quaternion); camera.aspect = aspect; camera.fov = fov; camera.updateProjectionMatrix(); camera.updateMatrixWorld();
+    model.position.copy(modelPosition); model.rotation.copy(modelRotation); model.updateMatrixWorld(true);
+  }
+}
 function showPhoto(photo){currentPhoto=photo;const a=awards[photo.award]||awards[0];$('photoImage').src=photo.image;$('photoDate').textContent=new Date(photo.date).toLocaleDateString('zh-CN');$('resultScore').textContent=photo.score;$('resultLevel').textContent=photo.score>=85?'金奖 · 本次解锁称号':photo.score>=70?'银奖 · 本次获得称号':photo.score>=55?'入围 · 本次获得称号':'继续探索，下一个角度会更好';$('resultTitle').textContent=photo.score>=55?a.name:'好奇的观察员';$('resultDescription').textContent=photo.visible?(photo.cropped?'主体有些超出画面了。试着拉远一点，保留完整轮廓。':a.description):'模特离开了画面。重置相机或转动镜头，让主角重新回到取景框里。';$('scoreDetails').textContent=`主体落点 ${photo.details[0]} · 景别匹配 ${photo.details[1]} · 机位高度 ${photo.details[2]}`;$('referenceImage').src=photo.reference||a.image;$('referenceTitle').textContent=a.title;if(!$('photoDialog').open)$('photoDialog').showModal();}
-function capture(){if(capturing)return;capturing=true;render();const result=evaluate();const image=renderer.domElement.toDataURL('image/jpeg',.88);const photo={...result,image,reference:awards[result.award].image,date:Date.now(),model:currentModel};album.unshift(photo);album=album.slice(0,24);try{localStorage.setItem('wildframe-album',JSON.stringify(album));}catch{toast('浏览器存储已满，本次照片可直接下载保存。');} $('albumCount').textContent=album.length;$('flash').classList.add('fire');setTimeout(()=>$('flash').classList.remove('fire'),90);setTimeout(()=>{showPhoto(photo);capturing=false;},280);}
+function capture() {
+  if (capturing) return;
+  if (party?.active && (party.isModel || party.state.round.phase !== 'shooting')) { toast(party.isModel ? '你是模特，摆好姿势让朋友来拍吧' : '等待房主开始本轮摄影赛'); return; }
+  capturing = true;
+  const inRound = party?.active;
+  const roundId = inRound ? party.state.round.id : null;
+  const aspect = camera.aspect;
+  const pixelRatio = renderer.getPixelRatio();
+  // Every contestant gets the same 3:2 sensor, regardless of screen dimensions.
+  if (inRound) { renderer.setPixelRatio(1); renderer.setSize(600,400,false); camera.aspect=1.5; camera.updateProjectionMatrix(); }
+  render();
+  const result = evaluate(inRound ? party.state.round.challenge : undefined);
+  const image = renderer.domElement.toDataURL('image/jpeg', inRound ? .75 : .88);
+  const shot = { position: camera.position.toArray(), quaternion: camera.quaternion.toArray(), fov: camera.fov };
+  if (inRound) {
+    party.send({ type: 'photo', roundId: party.state.round.id, seq: party.state.model.seq, camera: shot, image });
+    camera.aspect=aspect; camera.updateProjectionMatrix(); renderer.setPixelRatio(pixelRatio); resize();
+    toast('已向房主交片，本轮保留你的最高分作品');
+  }
+  const photo = {...result,image,reference:awards[result.award].image,date:Date.now(),model:currentModel};
+  album.unshift(photo); album=album.slice(0,24);
+  try { localStorage.setItem('wildframe-album',JSON.stringify(album)); } catch { toast('浏览器存储已满，本次照片可直接下载保存。'); }
+  $('albumCount').textContent=album.length;
+  $('flash').classList.add('fire'); setTimeout(()=>$('flash').classList.remove('fire'),90);
+  setTimeout(() => {
+    const sameRound = party?.active && party.state.round.id === roundId && party.state.round.phase === 'shooting';
+    if (inRound ? sameRound : !party?.active) showPhoto(photo);
+    capturing = false;
+  }, 280);
+}
 $('captureBtn').onclick=capture;
 $('downloadBtn').onclick=()=>{if(!currentPhoto)return;const a=document.createElement('a');a.download=`wildframe-${currentPhoto.date}.jpg`;a.href=currentPhoto.image;a.click();};
 $('closePhoto').onclick=$('continueBtn').onclick=()=>$('photoDialog').close();
 $('guideBtn').onclick=()=>$('guideDialog').showModal();$('closeGuide').onclick=$('startBtn').onclick=()=>$('guideDialog').close();
 $('albumNav').onclick=()=>{const grid=$('albumGrid');grid.replaceChildren();if(!album.length){const p=document.createElement('p');p.textContent='影集还空着。去花园里按下第一声快门吧。';p.className='subtitle';grid.append(p);}for(const photo of album){const b=document.createElement('button');b.className='album-item';const img=document.createElement('img');img.src=photo.image;img.alt='花园里的动物摄影作品';const p=document.createElement('p');p.textContent=`${photo.score>=55?(awards[photo.award]?.name||'摄影作品'):'好奇的观察员'} · ${photo.score} 分`;b.append(img,p);b.onclick=()=>{$('albumDialog').close();showPhoto(photo);};grid.append(b);} $('albumDialog').showModal();};
 $('closeAlbum').onclick=()=>$('albumDialog').close();$('studioNav').onclick=()=>{document.querySelectorAll('dialog[open]').forEach(d=>d.close());viewport.scrollIntoView({behavior:'smooth',block:'center'});};
-addEventListener('keydown',e=>{if(document.querySelector('dialog[open]')||e.target instanceof HTMLInputElement)return;if(['Space','ArrowUp','ArrowDown','KeyW','KeyA','KeyS','KeyD'].includes(e.code)){e.preventDefault();if(e.code==='Space'){if(!e.repeat)capture();}else keys.add(e.code);}});addEventListener('keyup',e=>keys.delete(e.code));addEventListener('blur',()=>keys.clear());document.querySelectorAll('dialog').forEach(d=>{d.addEventListener('close',()=>keys.clear());d.addEventListener('click',e=>{if(e.target===d){const r=d.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)d.close();}});});
-const clock=new THREE.Clock();
-function animate(){requestAnimationFrame(animate);const dt=Math.min(clock.getDelta(),.05);if(!document.querySelector('dialog[open]')&&keys.size){const forward=new THREE.Vector3();camera.getWorldDirection(forward);forward.y=0;forward.normalize();const right=new THREE.Vector3().crossVectors(forward,camera.up).normalize();const movement=new THREE.Vector3();if(keys.has('KeyW'))movement.add(forward);if(keys.has('KeyS'))movement.sub(forward);if(keys.has('KeyD'))movement.add(right);if(keys.has('KeyA'))movement.sub(right);if(keys.has('ArrowUp'))movement.y+=1;if(keys.has('ArrowDown'))movement.y-=1;movement.multiplyScalar(dt*2.7);const next=camera.position.clone().add(movement);if(next.y>.28&&next.y<12&&Math.hypot(next.x,next.z)<19){camera.position.add(movement);controls.target.add(movement);}}controls.update();render();}
+addEventListener('keydown',e=>{if(document.querySelector('dialog[open]')||e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement)return;if(['Space','ArrowUp','ArrowDown','KeyW','KeyA','KeyS','KeyD','KeyQ','KeyE'].includes(e.code)){e.preventDefault();if(e.code==='Space'){if(!e.repeat)capture();}else keys.add(e.code);}});addEventListener('keyup',e=>keys.delete(e.code));addEventListener('blur',()=>keys.clear());document.querySelectorAll('dialog').forEach(d=>{d.addEventListener('close',()=>keys.clear());d.addEventListener('click',e=>{if(e.target===d){const r=d.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)d.close();}});});
+party = createParty({
+  scoreShot: scoreRemoteShot,
+  applyModel(pose) { selectAnimal(pose.animal); applyPose(rabbit, pose); applyPose(turtle, pose); },
+  toast,
+  clearKeys: () => keys.clear(),
+});
+const clock = new THREE.Clock();
+let moveElapsed = 0;
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), .05);
+  moveElapsed += dt;
+  if (!document.querySelector('dialog[open]') && keys.size) {
+    if (party.active && party.isModel) {
+      if (moveElapsed >= .09) {
+        const dx = (Number(keys.has('KeyD')) - Number(keys.has('KeyA'))) * .14;
+        const dz = (Number(keys.has('KeyS')) - Number(keys.has('KeyW'))) * .14;
+        const turn = (Number(keys.has('KeyE')) - Number(keys.has('KeyQ'))) * .14;
+        if (dx || dz || turn) party.send({ type: 'move', dx, dz, turn });
+        moveElapsed = 0;
+      }
+    } else {
+      const forward = new THREE.Vector3(); camera.getWorldDirection(forward); forward.y=0; forward.normalize();
+      const right = new THREE.Vector3().crossVectors(forward,camera.up).normalize();
+      const movement = new THREE.Vector3();
+      if(keys.has('KeyW'))movement.add(forward); if(keys.has('KeyS'))movement.sub(forward);
+      if(keys.has('KeyD'))movement.add(right); if(keys.has('KeyA'))movement.sub(right);
+      if(keys.has('ArrowUp'))movement.y+=1; if(keys.has('ArrowDown'))movement.y-=1;
+      movement.multiplyScalar(dt*2.7);
+      const next=camera.position.clone().add(movement);
+      if(next.y>.28&&next.y<12&&Math.hypot(next.x,next.z)<19){camera.position.add(movement);controls.target.add(movement);}
+    }
+  }
+  controls.update(); render();
+}
 animate();
 
 
