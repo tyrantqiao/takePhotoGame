@@ -34,3 +34,7 @@ npm run build
 构建输出为 `dist/`。预期发布地址： https://tyrantqiao.github.io/takePhotoGame/ 。
 
 影集存储于当前浏览器 localStorage；清除站点数据会删除影集，请下载重要照片。界面字体使用 Google Fonts，加载失败时回退到系统字体。
+
+### 当前发布状态
+
+已推送到 main 并完成 GitHub Actions 部署。账号主站 `tyrantqiao.github.io` 绑定了 `tyrantqiao.com`，导致标准游戏地址继承跳转到 `https://tyrantqiao.com/takePhotoGame/`。该地址目前由 Vercel 返回 404，因此公网游玩入口尚不可用；需要调整现有域名路由/DNS 或为游戏配置独立子域名。未修改已有主站或其域名配置。本地 `npm run dev` 可直接游玩。
