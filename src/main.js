@@ -9,9 +9,11 @@ import { referenceById } from './references.js';
 import { setupReferences } from './reference-ui.js';
 import { clampAboveGround } from './camera-rig.js';
 import { createGameShell } from './game-shell.js';
+import { createAudio } from './audio.js';
 
 const $ = id => document.getElementById(id);
 const viewport = $('viewport');
+const audio = createAudio();
 let renderer;
 try { renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true }); }
 catch { $('loading').textContent = '你的浏览器暂不支持 WebGL，请开启硬件加速后重试。'; throw new Error('WebGL unavailable'); }
@@ -64,6 +66,7 @@ function selectLocation(id, refresh = true) {
   if (id === currentLocation) return;
   const config = locations.select(id); if (!config) return;
   currentLocation = id;
+  audio.setLocation(id);
   scene.background = new THREE.Color(config.sky); scene.fog = new THREE.Fog(config.sky, 25, 65);
   sun.color.set(config.sun); sun.intensity = config.light;
   hemi.intensity = id === 'kyoto' ? 1.65 : 2.1;
@@ -157,6 +160,7 @@ function capture() {
   if (capturing || !game?.canOperate) return;
   if (party?.active && (party.isModel || party.state.round.phase !== 'shooting')) { toast(party.isModel ? '你是模特，摆好姿势让朋友来拍吧' : '等待房主开始本轮摄影赛'); return; }
   capturing = true;
+  audio.play('shutter');
   const inRound = party?.active;
   const roundId = inRound ? party.state.round.id : null;
   const aspect = camera.aspect;
@@ -179,6 +183,7 @@ function capture() {
   taskMarker.visible=markerVisible;
   const reference=mission?referenceById(mission.reference):null;
   const photo = {...result,image,reference:reference?.image||awards[result.award].image,referenceTitle:reference?.image?reference.title:mission?mission.title+' · 游戏构图示意':undefined,missionTitle:mission?.title,date:Date.now(),model:currentModel,location:currentLocation};
+  if (!inRound) game.onPhoto(photo);
   album.unshift(photo); album=album.slice(0,24);
   try { localStorage.setItem('wildframe-album',JSON.stringify(album)); } catch { toast('浏览器存储已满，本次照片可直接下载保存。'); }
   $('albumCount').textContent=album.length;
@@ -206,13 +211,20 @@ party = createParty({
   toast,
   clearKeys: () => keys.clear(),
 });
-game = createGameShell({getRoom:()=>party,clearKeys:()=>keys.clear(),resetCamera:()=>{practiceTask=null;showTaskMarker(null);reset();},toast});
+game = createGameShell({
+  audio,getRoom:()=>party,clearKeys:()=>keys.clear(),
+  resetCamera:()=>{practiceTask=null;showTaskMarker(null);$('practiceHint').hidden=true;reset();},
+  getSample:()=>{const direction=new THREE.Vector3();camera.getWorldDirection(direction);return {position:camera.position.toArray(),quaternion:camera.quaternion.toArray(),fov:camera.fov,distance:camera.position.distanceTo(controls.target),pitch:THREE.MathUtils.radToDeg(Math.asin(direction.y))};},
+  toast,
+});
 const clock = new THREE.Clock();
 let moveElapsed = 0;
+let lessonElapsed = 0;
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), .05);
   moveElapsed += dt;
+  lessonElapsed += dt;
   if (game.canOperate && keys.size) {
     if (party.active && party.isModel) {
       if (moveElapsed >= .09) {
@@ -237,6 +249,8 @@ function animate() {
   controls.enabled=game.canOperate;controls.autoRotate=game.isTitle;controls.autoRotateSpeed=.3;
   if(game.canOperate||game.isTitle)controls.update();clampAboveGround(camera,controls.target);
   const height=camera.position.y.toFixed(2);if($('cameraHeightValue').textContent!==height+' m'){$('cameraHeightValue').textContent=height+' m';$('cameraHeight').value=height;}
+  audio.setPaused(game.phase!=='playing');
+  if(lessonElapsed>.15){if(game.canOperate)game.updateTutorial();lessonElapsed=0;}
   render();
 }
 animate();

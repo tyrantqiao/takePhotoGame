@@ -1,8 +1,11 @@
 import { GameFlow } from './game-flow.js';
+import { createTutorial } from './tutorial.js';
+import { createCeremony } from './ceremony.js';
 import './game.css';
+import './experience.css';
 
 const $=id=>document.getElementById(id);
-export function createGameShell({getRoom,clearKeys,resetCamera,toast}) {
+export function createGameShell({getRoom,clearKeys,resetCamera,getSample,audio,toast}) {
   const flow=new GameFlow();
   let localPaused=false,remotePaused=false,lastRoundKey='',roomWasActive=false;
   const shell=document.createElement('div');shell.id='gameShell';
@@ -23,6 +26,28 @@ export function createGameShell({getRoom,clearKeys,resetCamera,toast}) {
     </div>
     <section id="pauseScreen" class="game-screen pause-screen" aria-label="暂停菜单" hidden><div class="pause-card"><p class="game-overline">TAKE A BREATH</p><h2 id="pauseTitle">游戏已暂停<span>世界很大，慢慢拍。</span></h2><p id="pauseDescription">相机与操作已冻结，继续后回到刚才的视角。</p><div class="title-options"><button id="resumeGame" class="menu-primary">继续游戏 <span>▷</span></button><button id="pauseGuide">拍摄指南 <span>?</span></button><button id="returnToTitle">返回主菜单 <span>↗</span></button></div><small>已拍摄的照片保存在你的影集中</small></div></section>`;
   document.body.append(shell);
+  const lessonButton=document.createElement('button');lessonButton.id='menuLesson';lessonButton.innerHTML='新手摄影课 <span>↗</span>';$('beginGame').after(lessonButton);
+  const soundButton=document.createElement('button');soundButton.id='hudSound';soundButton.setAttribute('aria-label','声音设置');soundButton.textContent='♫';$('hudFullscreen').before(soundButton);
+  for(const [id,parent,label] of [['menuSound','title-footer','♫ 声音设置'],['pauseSound',null,'声音设置 ♫'],['pauseLesson',null,'重玩新手课 ↗']]){
+    const button=document.createElement('button');button.id=id;button.textContent=label;
+    if(parent)document.querySelector('.'+parent).prepend(button);else $('returnToTitle').before(button);
+  }
+  const soundDialog=document.createElement('dialog');soundDialog.id='soundDialog';soundDialog.className='game-panel';
+  soundDialog.innerHTML='<div class="game-panel-heading"><h2>听见这个世界</h2><button id="closeSound" aria-label="关闭声音设置">×</button></div><p class="sound-intro">每个目的地，都有自己的声音。</p><label class="sound-mute"><input type="checkbox" id="soundMute"> 全部静音</label><label class="sound-slider" for="ambientVolume">环境音 <output id="ambientValue"></output></label><input id="ambientVolume" type="range" min="0" max="100" step="1"><label class="sound-slider" for="effectsVolume">快门与反馈音 <output id="effectsValue"></output></label><input id="effectsVolume" type="range" min="0" max="100" step="1"><button id="testShutter" class="primary">试听快门</button><p id="audioStatus" role="status"></p><small>原创合成声景 · 设置会保存在本机</small>';
+  document.body.append(soundDialog);
+  audio.subscribe(prefs=>{
+    $('soundMute').checked=prefs.muted;$('ambientVolume').value=Math.round(prefs.ambient*100);$('effectsVolume').value=Math.round(prefs.effects*100);
+    $('ambientValue').textContent=Math.round(prefs.ambient*100)+'%';$('effectsValue').textContent=Math.round(prefs.effects*100)+'%';$('audioStatus').textContent=prefs.status;
+    soundButton.textContent=prefs.muted?'♪̸':'♫';soundButton.setAttribute('aria-label',prefs.muted?'声音设置（已静音）':'声音设置');
+  });
+  $('soundMute').onchange=e=>audio.set({muted:e.target.checked});$('ambientVolume').oninput=e=>audio.set({ambient:Number(e.target.value)/100});$('effectsVolume').oninput=e=>audio.set({effects:Number(e.target.value)/100});
+  $('testShutter').onclick=()=>audio.play('shutter');$('closeSound').onclick=()=>soundDialog.close();
+  const tutorial=createTutorial({getSample,audio,toast});
+  const ceremony=createCeremony({audio,getRoom,openRoom:()=>openPanel('roomDialog'),toast});
+  function startLesson(){if(getRoom()?.active){toast('新手摄影课请在退出联机房间后开始。');return;}enterGame();tutorial.start();}
+  lessonButton.onclick=$('pauseLesson').onclick=startLesson;
+  $('menuSound').onclick=$('pauseSound').onclick=soundButton.onclick=()=>openPanel('soundDialog');
+  shell.addEventListener('click',e=>{if(e.target.closest('button'))audio.play('ui');});
 
   function panel(id,title,node){
     const dialog=document.createElement('dialog');dialog.id=id;dialog.className='game-panel';
@@ -77,13 +102,13 @@ export function createGameShell({getRoom,clearKeys,resetCamera,toast}) {
     if(room?.state?.round?.paused)room.send({type:'pause',paused:false});
     flow.resume();paint();
   }
-  function openPanel(id){if(flow.phase==='paused'&&id!=='guideDialog')return;closePanels();$(id).showModal();clearKeys();}
+  function openPanel(id){if(flow.phase==='paused'&&!['guideDialog','soundDialog'].includes(id))return;closePanels();$(id).showModal();clearKeys();}
   function openParty(){if(getRoom()?.active)openPanel('roomDialog');else {closePanels();$('partyOpen').click();}}
   async function fullscreen(){try{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen();}catch{toast('当前窗口未提供系统全屏，游戏仍可正常游玩。');}}
-  $('beginGame').onclick=()=>enterGame();$('beginParty').onclick=openParty;
+  $('beginGame').onclick=()=>{enterGame();if(tutorial.needsIntro)tutorial.start();};$('beginParty').onclick=openParty;
   $('menuReferences').onclick=()=>openPanel('referenceDialog');$('menuGuide').onclick=()=>openPanel('guideDialog');
   $('pauseGame').onclick=pause;$('resumeGame').onclick=resume;$('pauseGuide').onclick=()=>openPanel('guideDialog');
-  $('returnToTitle').onclick=()=>{closePanels();getRoom()?.active&&getRoom().leave();flow.menu();localPaused=false;remotePaused=false;paint();};
+  $('returnToTitle').onclick=()=>{closePanels();tutorial.stop();getRoom()?.active&&getRoom().leave();flow.menu();localPaused=false;remotePaused=false;paint();};
   $('hudTravel').onclick=()=>openPanel('travelDialog');$('hudCast').onclick=()=>openPanel('castDialog');
   $('hudAlbum').onclick=()=>{closePanels();$('albumNav').click();};$('hudRoom').onclick=openParty;
   $('hudTasks').onclick=()=>{if(!getRoom()?.active){openPanel('referenceDialog');return;}$('taskDock').hidden=!$('taskDock').hidden;$('lensDock').hidden=true;};
@@ -103,9 +128,12 @@ export function createGameShell({getRoom,clearKeys,resetCamera,toast}) {
     get phase(){return flow.phase;},
     get canOperate(){return flow.canOperate&&!getRoom()?.state?.round?.paused&&!document.querySelector('dialog[open]');},
     get isTitle(){return flow.phase==='title'&&!document.querySelector('dialog[open]');},
-    enterPractice(task){enterGame(false);if(task){$('hudObjectiveLabel').textContent='REFERENCE FRAME PRACTICE';$('hudObjective').textContent=task.title;$('hudClock').textContent=task.hint;}},
+    updateTutorial(){tutorial.update();},
+    onPhoto(photo){tutorial.photo(photo);},
+    enterPractice(task){tutorial.stop();enterGame(false);if(task){$('hudObjectiveLabel').textContent='REFERENCE FRAME PRACTICE';$('hudObjective').textContent=task.title;$('hudClock').textContent=task.hint;}},
     onRoomState(state){
       const room=getRoom();
+      if(state)tutorial.stop();else ceremony.update(null);
       if(!state){if($('roomDialog').open)$('roomDialog').close();roomWasActive=false;lastRoundKey='';remotePaused=false;localPaused=false;$('modelControls').hidden=true;$('shutterDock').hidden=false;$('hudMode').textContent='自由摄影';$('hudObjectiveLabel').textContent='FREE EXPLORATION';$('hudObjective').textContent='寻找让你心动的角度';$('hudClock').textContent='没有时间限制';if(flow.phase!=='title')flow.play();paint();return;}
       if(!roomWasActive){enterGame(false);roomWasActive=true;openPanel('roomDialog');}
       $('hudMode').textContent=room.isModel?'模特 · 动作导演':'摄影师';
@@ -115,7 +143,7 @@ export function createGameShell({getRoom,clearKeys,resetCamera,toast}) {
       const key=state.round.id+':'+state.round.phase;
       if(key!==lastRoundKey){
         if(state.round.phase==='shooting'){closePanels();localPaused=false;flow.play();}
-        if(state.round.phase==='results'){localPaused=false;flow.play();openPanel('roomDialog');}
+        if(state.round.phase==='results'){localPaused=false;flow.play();closePanels();}
         lastRoundKey=key;
       }
       if(state.round.paused){remotePaused=true;closePanels();flow.pause();}
@@ -124,6 +152,7 @@ export function createGameShell({getRoom,clearKeys,resetCamera,toast}) {
       document.body.dataset.screen=flow.phase;$('titleScreen').hidden=flow.phase!=='title';$('pauseScreen').hidden=flow.phase!=='paused';$('gameHud').hidden=flow.phase==='title';
       $('gameHud').inert=flow.phase!=='playing';
       if(flow.phase==='paused')paint();
+      ceremony.update(state);
     },
   };
 }
