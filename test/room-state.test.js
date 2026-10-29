@@ -73,3 +73,20 @@ test('photo payload limits prevent unsupported image URLs and unbounded camera v
   assert.equal(validCamera(camera), true);
   for (const invalid of [{ ...camera, fov: 0 }, { ...camera, position: [100, 0, 0] }, { ...camera, quaternion: [1, 1, 1, 1] }]) assert.equal(validCamera(invalid), false);
 });
+
+test('maps are host-controlled and locked during competition; changing maps invalidates old pose history', () => {
+  const { authority: a, start } = setup();
+  assert.equal(a.state.location, 'kyoto');
+  assert.ok(a.command('guest', { type: 'location', location: 'paris' }));
+  assert.ok(a.command('host', { type: 'location', location: 'unknown' }));
+  a.command('host', { type: 'move', dx: .2, dz: .2, turn: .1 });
+  const oldSeq = a.state.model.seq;
+  assert.equal(a.command('host', { type: 'location', location: 'santorini' }), null);
+  assert.equal(a.state.location, 'santorini');
+  assert.equal(a.state.model.x, 0); assert.equal(a.state.model.z, 0);
+  assert.equal(a.history.has(oldSeq), false);
+  start();
+  assert.ok(a.command('host', { type: 'location', location: 'paris' }));
+  assert.equal(a.state.location, 'santorini');
+  assert.equal(a.snapshot().location, 'santorini');
+});

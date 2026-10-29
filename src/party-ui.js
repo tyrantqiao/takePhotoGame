@@ -2,13 +2,14 @@ import { Multiplayer, peerOptions } from './multiplayer.js';
 
 const $ = id => document.getElementById(id);
 const phases = { lobby: '等待开拍', shooting: '正在拍摄', results: '作品揭晓' };
-export function createParty({ scoreShot, applyModel, toast, clearKeys }) {
+export function createParty({ scoreShot, applyModel, applyLocation, getLocation, toast, clearKeys }) {
   let offset = 0, lastRound = '', gallerySignature = '', busy = false;
   let connectionSettings = { server: '', ice: '' };
   const room = new Multiplayer({
     scoreShot,
     onState(state) {
       offset = state.serverNow - Date.now();
+      applyLocation(state.location);
       applyModel(state.model);
       $('partyDialog').close();
       $('roomPanel').hidden = false;
@@ -34,6 +35,8 @@ export function createParty({ scoreShot, applyModel, toast, clearKeys }) {
       $('modelControls').hidden = !room.isModel;
       $('poseSelect').value = state.model.pose;
       document.querySelectorAll('.model').forEach(b => b.disabled = !room.isModel || state.round.phase === 'shooting');
+      document.querySelectorAll('[data-location]').forEach(b => b.disabled = !room.isHost || state.round.phase === 'shooting');
+      $('soloPoseControls').hidden = true;
       $('captureBtn').disabled = room.isModel || state.round.phase !== 'shooting';
       $('roundHint').textContent = state.round.phase === 'shooting'
         ? `主题：${['温柔的对视', '三分之一的诗', '小小的，大世界'][state.round.challenge]} · 每人保留本轮最高分 · 已交片 ${state.entries.length} / ${state.players.length - 1} · 统一 3:2 画幅`
@@ -74,6 +77,8 @@ export function createParty({ scoreShot, applyModel, toast, clearKeys }) {
       $('photoDialog').close();
       $('roomPanel').hidden = true; document.querySelector('.party-banner').hidden = false;
       document.querySelectorAll('.model').forEach(b => b.disabled = false);
+      document.querySelectorAll('[data-location]').forEach(b => b.disabled = false);
+      $('soloPoseControls').hidden = false; $('soloPose').value = 'stand';
       $('captureBtn').disabled = false;
       document.body.classList.remove('broadcast-mode'); $('broadcastBtn').setAttribute('aria-pressed', 'false');
       applyModel({ animal: 'rabbit', x: 0, z: 0, yaw: 0, pose: 'stand', seq: 0 });
@@ -94,7 +99,7 @@ export function createParty({ scoreShot, applyModel, toast, clearKeys }) {
       const options = peerOptions(server, ice);
       connectionSettings = { server, ice };
       setBusy(true);
-      await room.connect({ host, code: $('joinCode').value, name: $('playerName').value, options });
+      await room.connect({ host, code: $('joinCode').value, name: $('playerName').value, options, location: getLocation() });
     } catch (error) { $('partyStatus').textContent = error.message; toast(error.message); setBusy(false); }
   }
   $('partyOpen').onclick = () => $('partyDialog').showModal();

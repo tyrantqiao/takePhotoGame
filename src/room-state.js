@@ -1,4 +1,5 @@
 export const MAX_PLAYERS = 8;
+const LOCATION_IDS = ['kyoto', 'paris', 'santorini'];
 export const cleanName = value => typeof value === 'string' ? value.trim().slice(0, 16) || '摄影师' : '摄影师';
 export const validImage = image => typeof image === 'string' && image.length < 160000 && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(image);
 export function validCamera(shot) {
@@ -16,7 +17,7 @@ export class RoomAuthority {
     this.now = now;
     this.scoreShot = scoreShot;
     this.state = {
-      version: 1, hostId, modelId: hostId,
+      version: 2, hostId, modelId: hostId, location: 'kyoto',
       players: [{ id: hostId, name: cleanName(name) }],
       model: { animal: 'rabbit', x: 0, z: 0, yaw: 0, pose: 'stand', seq: 0 },
       round: { id: 0, phase: 'lobby', endsAt: 0, challenge: 0 }, entries: [],
@@ -53,6 +54,13 @@ export class RoomAuthority {
     this.tick();
     if (!message || typeof message !== 'object' || !this.state.players.some(p => p.id === id)) return '无效玩家';
     const { state } = this;
+    if (message.type === 'location') {
+      if (id !== state.hostId || state.round.phase === 'shooting') return '地图只能由房主在开拍前切换';
+      if (!LOCATION_IDS.includes(message.location)) return '无效地图';
+      state.location = message.location;
+      state.model = { ...state.model, x: 0, z: 0, seq: state.model.seq + 1 };
+      this.history.clear(); this.record(); return null;
+    }
     if (message.type === 'start') {
       if (id !== state.hostId || state.round.phase === 'shooting') return '只有房主可以开始新一轮';
       if (state.players.length < 2) return '至少需要一位模特和一位摄影师';
