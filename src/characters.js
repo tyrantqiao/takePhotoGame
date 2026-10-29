@@ -104,5 +104,9 @@ export function poseCharacter(model, pose) {
   rightArm.rotation.z = pose.pose === 'celebrate' ? 2.25 : pose.pose === 'lean' ? .32 : .11;
   leftLeg.rotation.x = pose.pose === 'celebrate' ? -.22 : 0;
   rightLeg.rotation.x = pose.pose === 'celebrate' ? .22 : 0;
+  leftArm.rotation.x = 0;rightArm.rotation.x = 0;
+  if(pose.pose==='wave') {rightArm.rotation.z=2.65;rightArm.rotation.x=-.3;head.rotation.z=.1;}
+  if(pose.pose==='point') {rightArm.rotation.z=1.35;rightArm.rotation.x=-.55;head.rotation.y=-.25;} else head.rotation.y=0;
+  if(pose.pose==='guard') {leftArm.rotation.z=-.75;rightArm.rotation.z=.75;leftArm.rotation.x=-1.15;rightArm.rotation.x=-1.15;}
   model.updateMatrixWorld(true);
 }

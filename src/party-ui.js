@@ -1,8 +1,11 @@
 import { Multiplayer, peerOptions } from './multiplayer.js';
+import { missionAt, modelReadiness, POSE_NAMES } from './missions.js';
+import { referenceById } from './references.js';
+import { downloadContactSheet } from './contact-sheet.js';
 
 const $ = id => document.getElementById(id);
 const phases = { lobby: '等待开拍', shooting: '正在拍摄', results: '作品揭晓' };
-export function createParty({ scoreShot, applyModel, applyLocation, getLocation, toast, clearKeys }) {
+export function createParty({ scoreShot, applyModel, applyLocation, getLocation, applyMission, toast, clearKeys }) {
   let offset = 0, lastRound = '', gallerySignature = '', busy = false;
   let connectionSettings = { server: '', ice: '' };
   const room = new Multiplayer({
@@ -11,18 +14,21 @@ export function createParty({ scoreShot, applyModel, applyLocation, getLocation,
       offset = state.serverNow - Date.now();
       applyLocation(state.location);
       applyModel(state.model);
+      const mission=missionAt(state.round.activeTask);
+      applyMission(state.round.phase==='shooting'?mission:null);
       $('partyDialog').close();
       $('roomPanel').hidden = false;
       document.querySelector('.party-banner').hidden = true;
       $('activeRoomCode').textContent = room.code;
       $('roomRole').textContent = room.isModel ? '你是模特' : '你是摄影师';
-      const playerSignature = JSON.stringify([state.players, state.modelId]);
+      const playerSignature = JSON.stringify([state.players, state.modelId,state.entries.map(e=>[e.id,e.completed,e.perfect])]);
       if ($('playerList').dataset.signature !== playerSignature) {
         $('playerList').dataset.signature = playerSignature;
         $('playerList').replaceChildren(...state.players.map(player => {
           const span = document.createElement('span');
           span.className = 'player-chip';
-          span.textContent = `${player.id === state.modelId ? '🐾' : '◎'} ${player.name}${player.id === room.id ? '（你）' : ''}${player.id === state.hostId ? ' · 房主' : ''}`;
+          const progress=state.entries.find(e=>e.id===player.id);
+          span.textContent = `${player.id === state.modelId ? '🐾' : '◎'} ${player.name}${player.id === room.id ? '（你）' : ''}${player.id === state.hostId ? ' · 房主' : ''}${player.id!==state.modelId?' · '+(progress?.completed||0)+'/'+state.round.count+' 格':''}`;
           return span;
         }));
         $('modelPlayer').replaceChildren(...state.players.map(player => {
@@ -38,10 +44,31 @@ export function createParty({ scoreShot, applyModel, applyLocation, getLocation,
       document.querySelectorAll('[data-location]').forEach(b => b.disabled = !room.isHost || state.round.phase === 'shooting');
       $('soloPoseControls').hidden = true;
       $('captureBtn').disabled = room.isModel || state.round.phase !== 'shooting';
+      const mine=state.entries.find(e=>e.id===room.id);
       $('roundHint').textContent = state.round.phase === 'shooting'
-        ? `主题：${['温柔的对视', '三分之一的诗', '小小的，大世界'][state.round.challenge]} · 每人保留本轮最高分 · 已交片 ${state.entries.length} / ${state.players.length - 1} · 统一 3:2 画幅`
+        ? `${state.round.count} 镜头组照 · 每格保留最高分，漏拍记 0 分 · ${room.isModel?'模特负责所有人的镜头切换':'我已拍 '+(mine?.completed||0)+' 格 / 达标 '+(mine?.perfect||0)+' 格'} · 85 分达标 · 统一 3:2 画幅`
         : state.round.phase === 'results' ? '本轮作品已揭晓。相同分数并列；没有交片的摄影师不参与排名。房主可换模特，再来一轮。' : '分享邀请链接，等朋友加入。房主可选择模特、主题与拍摄时长。';
       const roundKey = `${state.round.id}:${state.round.phase}`;
+      const readiness=modelReadiness(state.model,mission);
+      document.querySelector('.task-board').hidden=state.round.phase==='lobby';
+      $('missionTitle').textContent=`镜头 ${state.round.activeTask+1} / ${state.round.count} · ${mission.title}`;
+      $('missionHint').textContent=mission.hint;
+      const ref=referenceById(mission.reference);
+      $('missionReference').hidden=!ref.image;
+      if(ref.image){$('missionReference').src=ref.image;$('missionReference').alt=ref.title;}
+      $('missionReferenceLabel').textContent=ref.image?'参考：'+ref.title:'梗镜头演绎：'+ref.title+'（出处见参考库）';
+      $('modelReadiness').textContent=`目标 (${mission.x.toFixed(1)}, ${mission.z.toFixed(1)}) / 当前 (${state.model.x.toFixed(1)}, ${state.model.z.toFixed(1)}) · ${POSE_NAMES[mission.pose]} · 距离 ${readiness.distance.toFixed(2)} m / 转向误差 ${Math.round(readiness.angle*180/Math.PI)}° · ${readiness.ready?'✓ 模特已就位':'按地面圆环站位，用 Q / E 调整朝向'}`;
+      $('modelReadiness').classList.toggle('ready',readiness.ready);
+      $('previousTask').disabled=!room.isModel||state.round.phase!=='shooting'||state.round.activeTask===0;
+      $('nextTask').disabled=!room.isModel||state.round.phase!=='shooting'||state.round.activeTask===state.round.count-1;
+      $('endRoundBtn').hidden=!room.isHost||state.round.phase!=='shooting';
+      const slotSignature=JSON.stringify([state.round.id,state.round.phase,state.round.activeTask,mine?.photos.map(p=>p?.score)]);
+      if($('missionSlots').dataset.signature!==slotSignature){
+        $('missionSlots').dataset.signature=slotSignature;
+        $('missionSlots').replaceChildren(...Array.from({length:state.round.count},(_,index)=>{
+          const slot=document.createElement('span');slot.className='mission-slot'+(index===state.round.activeTask?' active':'');slot.textContent=`${index+1}. ${missionAt(index).title} · ${mine?.photos[index]?mine.photos[index].score+' 分':'待拍'}`;return slot;
+        }));
+      }
       if (lastRound !== roundKey) {
         clearKeys();
         if (state.round.phase === 'shooting') { document.querySelectorAll('dialog[open]').forEach(d => d.close()); toast('摄影赛开始！同一主题，各凭视角。'); }
@@ -59,11 +86,18 @@ export function createParty({ scoreShot, applyModel, applyLocation, getLocation,
           entries.forEach((entry, index) => {
             if (index && entry.score !== entries[index - 1].score) rank = index + 1;
             const card = document.createElement('article'); card.className = 'round-entry';
-            const image = document.createElement('img'); image.src = entry.image; image.alt = '摄影赛参赛作品';
+            const sheet=document.createElement('div');sheet.className='entry-sheet count-'+state.round.count;
+            Array.from({length:state.round.count},(_,slot)=>{
+              const cell=document.createElement('div');const photo=entry.photos[slot];
+              if(photo?.image){const image=document.createElement('img');image.src=photo.image;image.alt=`镜头 ${slot+1}：${missionAt(slot).title}`;cell.append(image);}
+              else cell.textContent='未完成';
+              const label=document.createElement('small');label.textContent=`${slot+1} · ${photo?.score||0} 分`;cell.append(label);sheet.append(cell);
+            });
             const caption = document.createElement('p');
-            caption.textContent = `${rank === 1 ? '🏆' : '#' + rank} ${state.players.find(p => p.id === entry.id)?.name || '已离开的摄影师'} · ${entry.score} 分`;
-            const download = document.createElement('a'); download.href = entry.image; download.download = `wildframe-round-${state.round.id}-${index + 1}.jpg`; download.textContent = '↓ 保存作品';
-            card.append(image, caption, download); $('roundGallery').append(card);
+            const name=state.players.find(p=>p.id===entry.id)?.name||'已离开的摄影师';
+            caption.textContent = `${rank === 1 ? '🏆' : '#' + rank} ${name} · ${entry.score} 分 · ${entry.completed}/${state.round.count} 格 · 达标 ${entry.perfect}/${state.round.count}${entry.perfect===state.round.count?' ✦ 完美组照':''}`;
+            const download=document.createElement('button');download.textContent='↓ 保存整套组照';download.onclick=()=>downloadContactSheet(entry,state.round.count,name,state.round.id).catch(()=>toast('组照生成失败，请重试'));
+            card.append(sheet,caption,download); $('roundGallery').append(card);
           });
         }
       }
@@ -74,6 +108,7 @@ export function createParty({ scoreShot, applyModel, applyLocation, getLocation,
     onError(text) { toast(text); $('partyStatus').textContent = text; setBusy(false); },
     onLeave(reason) {
       clearKeys();
+      applyMission(null);
       $('photoDialog').close();
       $('roomPanel').hidden = true; document.querySelector('.party-banner').hidden = false;
       document.querySelectorAll('.model').forEach(b => b.disabled = false);
@@ -108,7 +143,11 @@ export function createParty({ scoreShot, applyModel, applyLocation, getLocation,
   $('partyDialog').addEventListener('close', () => { if (busy && !room.active) room.leave(false); setBusy(false); });
   $('createRoomBtn').onclick = () => connect(true); $('joinRoomBtn').onclick = () => connect(false);
   $('leaveRoomBtn').onclick = () => room.leave();
-  $('startRoundBtn').onclick = () => room.send({ type: 'start', duration: Number($('roundDuration').value), challenge: Number($('roundChallenge').value) });
+  $('startRoundBtn').onclick = () => room.send({ type: 'start', duration: Number($('roundDuration').value), challenge: Number($('roundChallenge').value),count:Number($('roundCount').value) });
+  $('roundCount').onchange=()=>{$('roundDuration').value=Number($('roundCount').value)===1?'60':Number($('roundCount').value)===4?'180':'300';};
+  $('previousTask').onclick=()=>room.send({type:'task',index:room.state.round.activeTask-1});
+  $('nextTask').onclick=()=>room.send({type:'task',index:room.state.round.activeTask+1});
+  $('endRoundBtn').onclick=()=>room.send({type:'end'});
   $('modelPlayer').onchange = () => room.send({ type: 'role', id: $('modelPlayer').value });
   $('poseSelect').onchange = () => room.send({ type: 'move', dx: 0, dz: 0, turn: 0, pose: $('poseSelect').value });
   document.querySelectorAll('[data-step]').forEach(button => button.onclick = () => {

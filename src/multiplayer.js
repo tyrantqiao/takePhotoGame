@@ -1,7 +1,7 @@
 import { Peer } from 'peerjs';
 import { RoomAuthority, cleanName } from './room-state.js';
 
-const PREFIX = 'wildframe-v2-';
+const PREFIX = 'wildframe-v3-';
 const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 function roomCode() { return Array.from(crypto.getRandomValues(new Uint8Array(8)), n => alphabet[n % alphabet.length]).join(''); }
 export function peerOptions(server, iceText) {
@@ -56,12 +56,12 @@ export class Multiplayer {
       this.timer = setInterval(() => { if (this.authority?.tick()) this.publish(); }, 150);
     } else {
       this.onStatus('正在与房主建立点对点连接…');
-      const connection = peer.connect(PREFIX + this.code, { reliable: true, serialization: 'binary', metadata: { name: cleanName(name), version: 2 } });
+      const connection = peer.connect(PREFIX + this.code, { reliable: true, serialization: 'binary', metadata: { name: cleanName(name), version: 3 } });
       this.hostConnection = connection;
       this.joinTimer = setTimeout(() => { this.onError('无法连接房主。确认房间仍开启；部分网络需自建 TURN 中继。'); this.leave(); }, 20000);
       connection.on('data', message => {
         if (generation !== this.generation || !message || typeof message !== 'object') return;
-        if (message.type === 'state' && message.state?.version === 2 && Array.isArray(message.state.players)) {
+        if (message.type === 'state' && message.state?.version === 3 && Array.isArray(message.state.players)) {
           clearTimeout(this.joinTimer); this.state = message.state; this.onState(this.state);
           this.onStatus('已加入房间');
         } else if (message.type === 'pose' && this.state && message.roundId === this.state.round.id) {
@@ -78,7 +78,7 @@ export class Multiplayer {
     const authTimer = setTimeout(() => connection.close(), 10000);
     connection.on('open', () => {
       clearTimeout(authTimer);
-      if (generation !== this.generation || connection.metadata?.version !== 2 || !this.authority.join(connection.peer, connection.metadata.name)) {
+      if (generation !== this.generation || connection.metadata?.version !== 3 || !this.authority.join(connection.peer, connection.metadata.name)) {
         connection.send({ type: 'error', message: '房间已满（最多 8 人），或版本不兼容' });
         setTimeout(() => connection.close(), 500); return;
       }

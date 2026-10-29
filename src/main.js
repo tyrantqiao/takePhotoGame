@@ -4,6 +4,10 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createParty } from './party-ui.js';
 import { createModels, poseCharacter } from './characters.js';
 import { createLocations, LOCATIONS } from './locations.js';
+import { missionAt, scoreMission } from './missions.js';
+import { referenceById } from './references.js';
+import { setupReferences } from './reference-ui.js';
+import { clampAboveGround } from './camera-rig.js';
 
 const $ = id => document.getElementById(id);
 const viewport = $('viewport');
@@ -27,7 +31,7 @@ controls.enableDamping = true;
 controls.dampingFactor = .08;
 controls.minDistance = 2;
 controls.maxDistance = 30;
-controls.maxPolarAngle = Math.PI * .485;
+controls.maxPolarAngle = Math.PI * .88;
 controls.minPolarAngle = .15;
 controls.target.set(0, 1.1, 0);
 const hemi = new THREE.HemisphereLight('#fff4d6', '#a4ae77', 2.4); scene.add(hemi);
@@ -38,6 +42,12 @@ const { rabbit, turtle } = createModels(scene);
 let currentLocation = '';
 for (const model of [rabbit, turtle]) poseCharacter(model, {x:0,z:0,yaw:0,pose:'stand'});
 let party;
+let practiceTask = null;
+const taskMarker = new THREE.Group();
+const ring = new THREE.Mesh(new THREE.RingGeometry(.42,.48,48),new THREE.MeshBasicMaterial({color:0xc09b54,side:THREE.DoubleSide,depthWrite:false}));
+ring.rotation.x=-Math.PI/2;ring.position.y=.025;taskMarker.add(ring);
+const arrow = new THREE.Mesh(new THREE.ConeGeometry(.13,.35,3),new THREE.MeshBasicMaterial({color:0xc09b54}));arrow.rotation.x=Math.PI/2;arrow.position.set(0,.04,.6);taskMarker.add(arrow);taskMarker.visible=false;scene.add(taskMarker);
+function showTaskMarker(task){taskMarker.visible=!!task;if(task){taskMarker.position.set(task.x,0,task.z);taskMarker.rotation.y=task.yaw;}}
 const keys=new Set();let currentModel='rabbit',currentPhoto=null,album=[];let capturing=false;
 try {const saved=JSON.parse(localStorage.getItem('wildframe-album')||'[]');if(Array.isArray(saved))album=saved.filter(p=>p&&typeof p.image==='string'&&p.image.startsWith('data:image/jpeg')&&typeof p.score==='number').slice(0,24);}catch{}
 $('albumCount').textContent=album.length;
@@ -67,12 +77,13 @@ function resize(){const w=viewport.clientWidth,h=viewport.clientHeight;renderer.
 new ResizeObserver(resize).observe(viewport);
 selectLocation('kyoto',false);reset();resize();
 function makeReferences() {
+  const markerWasVisible=taskMarker.visible;taskMarker.visible=false;
   const model = rabbit.visible ? rabbit : turtle, savedPose = {...model.userData.pose};
   const position=camera.position.clone(), quaternion=camera.quaternion.clone(), target=controls.target.clone(), focal=Number($('zoom').value), aspect=camera.aspect;
   poseCharacter(model,{x:0,z:0,yaw:0,pose:'stand'});
   renderer.setSize(480,320,false); camera.aspect=1.5;
   for(const award of awards){camera.position.set(...award.pos);controls.target.set(...award.target);camera.lookAt(controls.target);setFocal(award.focal);render();const measured=metrics();Object.assign(award,{x:measured.x,y:measured.y,size:measured.size,height:measured.height});award.image=renderer.domElement.toDataURL('image/jpeg',.82);}
-  poseCharacter(model,savedPose);
+  poseCharacter(model,savedPose);taskMarker.visible=markerWasVisible;
   camera.position.copy(position); camera.quaternion.copy(quaternion); controls.target.copy(target); camera.aspect=aspect;setFocal(focal);resize();
   $('awardCards').replaceChildren(...awards.map(award=>{
     const button=document.createElement('button');button.className='award-card';
@@ -88,6 +99,9 @@ document.querySelectorAll('[data-location]').forEach(button => button.onclick = 
   else selectLocation(button.dataset.location);
 });
 $('soloPose').onchange=()=>{for(const model of [rabbit,turtle])poseCharacter(model,{...model.userData.pose,pose:$('soloPose').value});};
+$('lowAngleBtn').onclick=()=>{const model=rabbit.visible?rabbit:turtle;const offset=camera.position.clone().sub(model.position);offset.y=0;if(offset.length()<.1)offset.set(0,0,1);offset.normalize().multiplyScalar(5.7);camera.position.set(model.position.x+offset.x,.35,model.position.z+offset.z);controls.target.set(model.position.x,1.9,model.position.z);setFocal(35);controls.update();toast('低机位已就绪，拖动画面可继续向上仰拍');};
+$('cameraHeight').oninput=e=>{camera.position.y=Number(e.target.value);controls.update();clampAboveGround(camera,controls.target);};
+setupReferences({onPractice(index){if(party?.active){toast('联机中请按本轮镜头清单拍摄');return;}practiceTask=index;const task=missionAt(index);showTaskMarker(task);for(const model of [rabbit,turtle])poseCharacter(model,{...model.userData.pose,x:task.x,z:task.z,yaw:task.yaw,pose:task.pose});$('soloPose').value=task.pose;$('practiceHint').textContent='练习：'+task.title+' · '+task.hint;$('practiceHint').hidden=false;viewport.scrollIntoView({behavior:'smooth',block:'center'});}});
 $('zoom').oninput=e=>setFocal(Number(e.target.value));
 $('resetBtn').onclick=()=>{reset();toast('相机已回到初始位置');};
 $('gridBtn').onclick=()=>{const enabled=$('grid').hidden;$('grid').hidden=!enabled;$('gridBtn').setAttribute('aria-pressed',String(enabled));};
@@ -121,7 +135,7 @@ function evaluate(challenge) {
 }
 function applyPose(model, pose) { poseCharacter(model, pose); }
 
-function scoreRemoteShot(shot, pose, challenge) {
+function scoreRemoteShot(shot, pose, challenge, mission) {
   const position = camera.position.clone(), quaternion = camera.quaternion.clone(), aspect = camera.aspect, fov = camera.fov;
   const model = pose.animal === 'rabbit' ? rabbit : turtle;
   const savedPose = {...model.userData.pose};
@@ -129,13 +143,14 @@ function scoreRemoteShot(shot, pose, challenge) {
     camera.position.fromArray(shot.position); camera.quaternion.fromArray(shot.quaternion);
     camera.aspect = 1.5; camera.fov = shot.fov; camera.updateProjectionMatrix();
     applyPose(model, pose);
+    if(mission){const direction=new THREE.Vector3();camera.getWorldDirection(direction);return scoreMission(metrics(),pose,mission,THREE.MathUtils.radToDeg(Math.asin(direction.y))).score;}
     return evaluate(challenge).score;
   } finally {
     camera.position.copy(position); camera.quaternion.copy(quaternion); camera.aspect = aspect; camera.fov = fov; camera.updateProjectionMatrix(); camera.updateMatrixWorld();
     poseCharacter(model, savedPose);
   }
 }
-function showPhoto(photo){currentPhoto=photo;const a=awards[photo.award]||awards[0];$('photoImage').src=photo.image;$('photoDate').textContent=new Date(photo.date).toLocaleDateString('zh-CN');$('resultScore').textContent=photo.score;$('resultLevel').textContent=photo.score>=85?'金奖 · 本次解锁称号':photo.score>=70?'银奖 · 本次获得称号':photo.score>=55?'入围 · 本次获得称号':'继续探索，下一个角度会更好';$('resultTitle').textContent=photo.score>=55?a.name:'好奇的观察员';$('resultDescription').textContent=photo.visible?(photo.cropped?'主体有些超出画面了。试着拉远一点，保留完整轮廓。':a.description):'模特离开了画面。重置相机或转动镜头，让主角重新回到取景框里。';$('scoreDetails').textContent=`主体落点 ${photo.details[0]} · 景别匹配 ${photo.details[1]} · 机位高度 ${photo.details[2]}`;$('referenceImage').src=photo.reference||a.image;$('referenceTitle').textContent=a.title;if(!$('photoDialog').open)$('photoDialog').showModal();}
+function showPhoto(photo){currentPhoto=photo;const a=awards[photo.award]||awards[0];$('photoImage').src=photo.image;$('photoDate').textContent=new Date(photo.date).toLocaleDateString('zh-CN');$('resultScore').textContent=photo.score;$('resultLevel').textContent=photo.score>=85?'金奖 · 本次解锁称号':photo.score>=70?'银奖 · 本次获得称号':photo.score>=55?'入围 · 本次获得称号':'继续探索，下一个角度会更好';$('resultTitle').textContent=photo.missionTitle|| (photo.score>=55?a.name:'好奇的观察员');$('resultDescription').textContent=photo.visible?(photo.cropped?'主体有些超出画面了。试着拉远一点，保留完整轮廓。':a.description):'模特离开了画面。重置相机或转动镜头，让主角重新回到取景框里。';$('scoreDetails').textContent=`主体落点 ${photo.details[0]} · 景别匹配 ${photo.details[1]} · 机位高度 ${photo.details[2]}`+(photo.cooperation?` · 站位 ${photo.cooperation[0]} · 摆姿 ${photo.cooperation[1]} · 朝向 ${photo.cooperation[2]}`:'');if(photo.missionTitle)$('resultDescription').textContent=photo.ready?'模特已配合就位。继续调整主体落点、景别和仰俯角，85 分即可达标。':'模特尚未满足本镜头的站位、摆姿或朝向，本张最高 54 分；裁切或出框会进一步扣分。';$('referenceImage').src=photo.reference||a.image;$('referenceTitle').textContent=photo.referenceTitle||a.title;if(!$('photoDialog').open)$('photoDialog').showModal();}
 function capture() {
   if (capturing) return;
   if (party?.active && (party.isModel || party.state.round.phase !== 'shooting')) { toast(party.isModel ? '你是模特，摆好姿势让朋友来拍吧' : '等待房主开始本轮摄影赛'); return; }
@@ -146,16 +161,22 @@ function capture() {
   const pixelRatio = renderer.getPixelRatio();
   // Every contestant gets the same 3:2 sensor, regardless of screen dimensions.
   if (inRound) { renderer.setPixelRatio(1); renderer.setSize(600,400,false); camera.aspect=1.5; camera.updateProjectionMatrix(); }
-  render();
-  const result = evaluate(inRound ? party.state.round.challenge : undefined);
-  const image = renderer.domElement.toDataURL('image/jpeg', inRound ? .75 : .88);
+  const markerVisible=taskMarker.visible; taskMarker.visible=false; render();
+  const taskIndex=inRound?party.state.round.activeTask:practiceTask;
+  const mission=taskIndex===null?null:missionAt(taskIndex);
+  const direction=new THREE.Vector3();camera.getWorldDirection(direction);
+  const model=rabbit.visible?rabbit:turtle;
+  const result=mission?{...scoreMission(metrics(),model.userData.pose,mission,THREE.MathUtils.radToDeg(Math.asin(direction.y))),award:0}:evaluate();
+  const image = renderer.domElement.toDataURL('image/jpeg', inRound ? .65 : .88);
   const shot = { position: camera.position.toArray(), quaternion: camera.quaternion.toArray(), fov: camera.fov };
   if (inRound) {
-    party.send({ type: 'photo', roundId: party.state.round.id, seq: party.state.model.seq, camera: shot, image });
+    party.send({ type: 'photo', roundId: party.state.round.id, seq: party.state.model.seq, camera: shot, image, taskIndex });
     camera.aspect=aspect; camera.updateProjectionMatrix(); renderer.setPixelRatio(pixelRatio); resize();
-    toast('已向房主交片，本轮保留你的最高分作品');
+    toast('已提交镜头 '+(taskIndex+1)+'，同一格保留最高分');
   }
-  const photo = {...result,image,reference:awards[result.award].image,date:Date.now(),model:currentModel,location:currentLocation};
+  taskMarker.visible=markerVisible;
+  const reference=mission?referenceById(mission.reference):null;
+  const photo = {...result,image,reference:reference?.image||awards[result.award].image,referenceTitle:reference?.image?reference.title:mission?mission.title+' · 游戏构图示意':undefined,missionTitle:mission?.title,date:Date.now(),model:currentModel,location:currentLocation};
   album.unshift(photo); album=album.slice(0,24);
   try { localStorage.setItem('wildframe-album',JSON.stringify(album)); } catch { toast('浏览器存储已满，本次照片可直接下载保存。'); }
   $('albumCount').textContent=album.length;
@@ -177,6 +198,7 @@ party = createParty({
   scoreShot: scoreRemoteShot,
   applyLocation: id => selectLocation(id),
   getLocation: () => currentLocation,
+  applyMission: task => { practiceTask=null; showTaskMarker(task);$('practiceHint').hidden=true; },
   applyModel(pose) { selectAnimal(pose.animal); applyPose(rabbit, pose); applyPose(turtle, pose); },
   toast,
   clearKeys: () => keys.clear(),
@@ -205,10 +227,12 @@ function animate() {
       if(keys.has('ArrowUp'))movement.y+=1; if(keys.has('ArrowDown'))movement.y-=1;
       movement.multiplyScalar(dt*2.7);
       const next=camera.position.clone().add(movement);
-      if(next.y>.28&&next.y<12&&Math.hypot(next.x,next.z)<19){camera.position.add(movement);controls.target.add(movement);}
+      if(next.y>=.15&&next.y<12&&Math.hypot(next.x,next.z)<19){camera.position.add(movement);controls.target.add(movement);}
     }
   }
-  controls.update(); render();
+  controls.update();clampAboveGround(camera,controls.target);
+  const height=camera.position.y.toFixed(2);if($('cameraHeightValue').textContent!==height+' m'){$('cameraHeightValue').textContent=height+' m';$('cameraHeight').value=height;}
+  render();
 }
 animate();
 
