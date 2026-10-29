@@ -2,6 +2,7 @@ import { Multiplayer, peerOptions } from './multiplayer.js';
 import { missionAt, modelReadiness, POSE_NAMES } from './missions.js';
 import { referenceById } from './references.js';
 import { downloadContactSheet } from './contact-sheet.js';
+import { syncPerformanceUI } from './performance-ui.js';
 
 const $ = id => document.getElementById(id);
 const phases = { lobby: '等待开拍', shooting: '正在拍摄', results: '作品揭晓' };
@@ -14,6 +15,7 @@ export function createParty({ scoreShot, applyModel, applyLocation, getLocation,
       offset = state.serverNow - Date.now();
       applyLocation(state.location);
       applyModel(state.model);
+      syncPerformanceUI(state.model,true,room.isModel&&!state.round.paused);
       const mission=missionAt(state.round.activeTask);
       applyMission(state.round.phase==='shooting'?mission:null);
       $('partyDialog').close();
@@ -118,6 +120,7 @@ export function createParty({ scoreShot, applyModel, applyLocation, getLocation,
       $('captureBtn').disabled = false;
       document.body.classList.remove('broadcast-mode'); $('broadcastBtn').setAttribute('aria-pressed', 'false');
       applyModel({ animal: 'rabbit', x: 0, z: 0, yaw: 0, pose: 'stand', seq: 0 });
+      syncPerformanceUI({expression:'neutral',motion:'still'});
       gallerySignature = ''; lastRound = ''; setBusy(false);
       toast(reason || '已回到单人摄影棚');
       onRoomState?.(null);

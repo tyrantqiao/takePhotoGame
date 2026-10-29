@@ -1,3 +1,4 @@
+import { EXPRESSIONS, MOTIONS } from './performance.js';
 export async function downloadContactSheet(entry,count,name,roundId) {
   const columns=count===1?1:count===4?2:3, rows=Math.ceil(count/columns);
   const cell=400,pad=20,header=90;
@@ -10,6 +11,7 @@ export async function downloadContactSheet(entry,count,name,roundId) {
     ctx.fillStyle='#e0e3d5';ctx.fillRect(x,y,cell-10,260);
     if(photo?.image){const image=new Image();image.src=photo.image;await image.decode();ctx.drawImage(image,x,y,cell-10,260);}
     ctx.fillStyle='#526449';ctx.font='13px sans-serif';ctx.fillText(`镜头 ${index+1} · ${photo?photo.score+' 分':'未完成（0 分）'}`,x,y+283);
+    if(photo?.expression){ctx.font='11px sans-serif';ctx.fillText(`${EXPRESSIONS[photo.expression]||'自然'} / ${MOTIONS[photo.motion]||'定格摆姿'}`,x,y+301);}
   }));
   const url=canvas.toDataURL('image/jpeg',.9);
   let dialog=document.getElementById('sheetDialog');
