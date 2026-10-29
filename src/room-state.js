@@ -18,7 +18,7 @@ export class RoomAuthority {
     this.now = now;
     this.scoreShot = scoreShot;
     this.state = {
-      version: 3, hostId, modelId: hostId, location: 'kyoto',
+      version: 4, hostId, modelId: hostId, location: 'kyoto',
       players: [{ id: hostId, name: cleanName(name) }],
       model: { animal: 'rabbit', x: 0, z: 0, yaw: 0, pose: 'stand', seq: 0 },
       round: { id: 0, phase: 'lobby', endsAt: 0, challenge: 0, count:1, activeTask:0 }, entries: [],
@@ -43,10 +43,11 @@ export class RoomAuthority {
     if (this.state.modelId === id) {
       this.state.modelId = this.state.hostId;
       this.state.round.phase = 'results'; // Stop rather than silently changing model mid-round.
+      this.state.round.paused = false;
     }
   }
   tick() {
-    if (this.state.round.phase === 'shooting' && this.now() >= this.state.round.endsAt) {
+    if (this.state.round.phase === 'shooting' && !this.state.round.paused && this.now() >= this.state.round.endsAt) {
       this.state.round.phase = 'results'; return true;
     }
     return false;
@@ -55,9 +56,16 @@ export class RoomAuthority {
     this.tick();
     if (!message || typeof message !== 'object' || !this.state.players.some(p => p.id === id)) return '无效玩家';
     const { state } = this;
+    if(message.type==='pause'){
+      if(id!==state.hostId||state.round.phase!=='shooting'||typeof message.paused!=='boolean')return '只有房主可以暂停或继续对局';
+      if(message.paused&&!state.round.paused){state.round.remainingMs=Math.max(0,state.round.endsAt-this.now());state.round.paused=true;}
+      else if(!message.paused&&state.round.paused){state.round.endsAt=this.now()+state.round.remainingMs;state.round.paused=false;}
+      return null;
+    }
+    if(state.round.paused&&['move','photo','task'].includes(message.type))return '对局已暂停，请等待房主继续';
     if (message.type === 'end') {
       if(id!==state.hostId || state.round.phase!=='shooting')return '只有房主可以结束拍摄';
-      state.round.phase='results';return null;
+      state.round.phase='results';state.round.paused=false;return null;
     }
     if (message.type === 'task') {
       if(id!==state.modelId || state.round.phase!=='shooting')return '拍摄中的模特才能切换任务';
@@ -76,7 +84,7 @@ export class RoomAuthority {
       if (state.players.length < 2) return '至少需要一位模特和一位摄影师';
       if (![0, 1, 2].includes(message.challenge) || ![30, 60, 90, 180, 300].includes(message.duration) || ![1,4,9].includes(message.count ?? 1)) return '无效比赛设置';
       state.entries = [];
-      state.round = { id: state.round.id + 1, phase: 'shooting', endsAt: this.now() + message.duration * 1000, challenge: message.challenge, count:message.count??1, activeTask:0 };
+      state.round = { id: state.round.id + 1, phase: 'shooting', endsAt: this.now() + message.duration * 1000, challenge: message.challenge, count:message.count??1, activeTask:0,paused:false,remainingMs:0 };
       this.history.clear(); this.record();
       return null;
     }

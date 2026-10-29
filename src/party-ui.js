@@ -5,7 +5,7 @@ import { downloadContactSheet } from './contact-sheet.js';
 
 const $ = id => document.getElementById(id);
 const phases = { lobby: '等待开拍', shooting: '正在拍摄', results: '作品揭晓' };
-export function createParty({ scoreShot, applyModel, applyLocation, getLocation, applyMission, toast, clearKeys }) {
+export function createParty({ scoreShot, applyModel, applyLocation, getLocation, applyMission, onRoomState, toast, clearKeys }) {
   let offset = 0, lastRound = '', gallerySignature = '', busy = false;
   let connectionSettings = { server: '', ice: '' };
   const room = new Multiplayer({
@@ -103,6 +103,7 @@ export function createParty({ scoreShot, applyModel, applyLocation, getLocation,
       }
       updateClock();
       setBusy(false);
+      onRoomState?.(state);
     },
     onStatus(text) { $('roomStatus').textContent = text; $('partyStatus').textContent = text; },
     onError(text) { toast(text); $('partyStatus').textContent = text; setBusy(false); },
@@ -119,12 +120,13 @@ export function createParty({ scoreShot, applyModel, applyLocation, getLocation,
       applyModel({ animal: 'rabbit', x: 0, z: 0, yaw: 0, pose: 'stand', seq: 0 });
       gallerySignature = ''; lastRound = ''; setBusy(false);
       toast(reason || '已回到单人摄影棚');
+      onRoomState?.(null);
     },
   });
   function setBusy(value) { busy = value; $('createRoomBtn').disabled = value; $('joinRoomBtn').disabled = value; }
   function updateClock() {
     const state = room.state; if (!state) return;
-    $('roundClock').textContent = state.round.phase === 'shooting' ? `${Math.max(0, Math.ceil((state.round.endsAt - Date.now() - offset) / 1000))} 秒` : phases[state.round.phase];
+    $('roundClock').textContent = state.round.phase === 'shooting' ? state.round.paused?`暂停 · 剩余 ${Math.ceil(state.round.remainingMs/1000)} 秒`:`${Math.max(0, Math.ceil((state.round.endsAt - Date.now() - offset) / 1000))} 秒` : phases[state.round.phase];
   }
   setInterval(updateClock, 200);
   async function connect(host) {

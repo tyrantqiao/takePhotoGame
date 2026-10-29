@@ -8,6 +8,7 @@ import { missionAt, scoreMission } from './missions.js';
 import { referenceById } from './references.js';
 import { setupReferences } from './reference-ui.js';
 import { clampAboveGround } from './camera-rig.js';
+import { createGameShell } from './game-shell.js';
 
 const $ = id => document.getElementById(id);
 const viewport = $('viewport');
@@ -42,6 +43,7 @@ const { rabbit, turtle } = createModels(scene);
 let currentLocation = '';
 for (const model of [rabbit, turtle]) poseCharacter(model, {x:0,z:0,yaw:0,pose:'stand'});
 let party;
+let game;
 let practiceTask = null;
 const taskMarker = new THREE.Group();
 const ring = new THREE.Mesh(new THREE.RingGeometry(.42,.48,48),new THREE.MeshBasicMaterial({color:0xc09b54,side:THREE.DoubleSide,depthWrite:false}));
@@ -101,7 +103,7 @@ document.querySelectorAll('[data-location]').forEach(button => button.onclick = 
 $('soloPose').onchange=()=>{for(const model of [rabbit,turtle])poseCharacter(model,{...model.userData.pose,pose:$('soloPose').value});};
 $('lowAngleBtn').onclick=()=>{const model=rabbit.visible?rabbit:turtle;const offset=camera.position.clone().sub(model.position);offset.y=0;if(offset.length()<.1)offset.set(0,0,1);offset.normalize().multiplyScalar(5.7);camera.position.set(model.position.x+offset.x,.35,model.position.z+offset.z);controls.target.set(model.position.x,1.9,model.position.z);setFocal(35);controls.update();toast('低机位已就绪，拖动画面可继续向上仰拍');};
 $('cameraHeight').oninput=e=>{camera.position.y=Number(e.target.value);controls.update();clampAboveGround(camera,controls.target);};
-setupReferences({onPractice(index){if(party?.active){toast('联机中请按本轮镜头清单拍摄');return;}practiceTask=index;const task=missionAt(index);showTaskMarker(task);for(const model of [rabbit,turtle])poseCharacter(model,{...model.userData.pose,x:task.x,z:task.z,yaw:task.yaw,pose:task.pose});$('soloPose').value=task.pose;$('practiceHint').textContent='练习：'+task.title+' · '+task.hint;$('practiceHint').hidden=false;viewport.scrollIntoView({behavior:'smooth',block:'center'});}});
+setupReferences({onPractice(index){if(party?.active){toast('联机中请按本轮镜头清单拍摄');return;}practiceTask=index;const task=missionAt(index);game?.enterPractice(task);showTaskMarker(task);for(const model of [rabbit,turtle])poseCharacter(model,{...model.userData.pose,x:task.x,z:task.z,yaw:task.yaw,pose:task.pose});$('soloPose').value=task.pose;$('practiceHint').textContent='练习：'+task.title+' · '+task.hint;$('practiceHint').hidden=false;viewport.scrollIntoView({behavior:'smooth',block:'center'});}});
 $('zoom').oninput=e=>setFocal(Number(e.target.value));
 $('resetBtn').onclick=()=>{reset();toast('相机已回到初始位置');};
 $('gridBtn').onclick=()=>{const enabled=$('grid').hidden;$('grid').hidden=!enabled;$('gridBtn').setAttribute('aria-pressed',String(enabled));};
@@ -152,7 +154,7 @@ function scoreRemoteShot(shot, pose, challenge, mission) {
 }
 function showPhoto(photo){currentPhoto=photo;const a=awards[photo.award]||awards[0];$('photoImage').src=photo.image;$('photoDate').textContent=new Date(photo.date).toLocaleDateString('zh-CN');$('resultScore').textContent=photo.score;$('resultLevel').textContent=photo.score>=85?'金奖 · 本次解锁称号':photo.score>=70?'银奖 · 本次获得称号':photo.score>=55?'入围 · 本次获得称号':'继续探索，下一个角度会更好';$('resultTitle').textContent=photo.missionTitle|| (photo.score>=55?a.name:'好奇的观察员');$('resultDescription').textContent=photo.visible?(photo.cropped?'主体有些超出画面了。试着拉远一点，保留完整轮廓。':a.description):'模特离开了画面。重置相机或转动镜头，让主角重新回到取景框里。';$('scoreDetails').textContent=`主体落点 ${photo.details[0]} · 景别匹配 ${photo.details[1]} · 机位高度 ${photo.details[2]}`+(photo.cooperation?` · 站位 ${photo.cooperation[0]} · 摆姿 ${photo.cooperation[1]} · 朝向 ${photo.cooperation[2]}`:'');if(photo.missionTitle)$('resultDescription').textContent=photo.ready?'模特已配合就位。继续调整主体落点、景别和仰俯角，85 分即可达标。':'模特尚未满足本镜头的站位、摆姿或朝向，本张最高 54 分；裁切或出框会进一步扣分。';$('referenceImage').src=photo.reference||a.image;$('referenceTitle').textContent=photo.referenceTitle||a.title;if(!$('photoDialog').open)$('photoDialog').showModal();}
 function capture() {
-  if (capturing) return;
+  if (capturing || !game?.canOperate) return;
   if (party?.active && (party.isModel || party.state.round.phase !== 'shooting')) { toast(party.isModel ? '你是模特，摆好姿势让朋友来拍吧' : '等待房主开始本轮摄影赛'); return; }
   capturing = true;
   const inRound = party?.active;
@@ -183,7 +185,7 @@ function capture() {
   $('flash').classList.add('fire'); setTimeout(()=>$('flash').classList.remove('fire'),90);
   setTimeout(() => {
     const sameRound = party?.active && party.state.round.id === roundId && party.state.round.phase === 'shooting';
-    if (inRound ? sameRound : !party?.active) showPhoto(photo);
+    if (game?.phase==='playing' && (inRound ? sameRound : !party?.active)) showPhoto(photo);
     capturing = false;
   }, 280);
 }
@@ -193,9 +195,10 @@ $('closePhoto').onclick=$('continueBtn').onclick=()=>$('photoDialog').close();
 $('guideBtn').onclick=()=>$('guideDialog').showModal();$('closeGuide').onclick=$('startBtn').onclick=()=>$('guideDialog').close();
 $('albumNav').onclick=()=>{const grid=$('albumGrid');grid.replaceChildren();if(!album.length){const p=document.createElement('p');p.textContent='影集还空着。去花园里按下第一声快门吧。';p.className='subtitle';grid.append(p);}for(const photo of album){const b=document.createElement('button');b.className='album-item';const img=document.createElement('img');img.src=photo.image;img.alt='花园里的动物摄影作品';const p=document.createElement('p');p.textContent=`${photo.score>=55?(awards[photo.award]?.name||'摄影作品'):'好奇的观察员'} · ${photo.score} 分`;b.append(img,p);b.onclick=()=>{$('albumDialog').close();showPhoto(photo);};grid.append(b);} $('albumDialog').showModal();};
 $('closeAlbum').onclick=()=>$('albumDialog').close();$('studioNav').onclick=()=>{document.querySelectorAll('dialog[open]').forEach(d=>d.close());viewport.scrollIntoView({behavior:'smooth',block:'center'});};
-addEventListener('keydown',e=>{if(document.querySelector('dialog[open]')||e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement)return;if(['Space','ArrowUp','ArrowDown','KeyW','KeyA','KeyS','KeyD','KeyQ','KeyE'].includes(e.code)){e.preventDefault();if(e.code==='Space'){if(!e.repeat)capture();}else keys.add(e.code);}});addEventListener('keyup',e=>keys.delete(e.code));addEventListener('blur',()=>keys.clear());document.querySelectorAll('dialog').forEach(d=>{d.addEventListener('close',()=>keys.clear());d.addEventListener('click',e=>{if(e.target===d){const r=d.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)d.close();}});});
+addEventListener('keydown',e=>{if(!game?.canOperate||document.querySelector('dialog[open]')||e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement)return;if(['Space','ArrowUp','ArrowDown','KeyW','KeyA','KeyS','KeyD','KeyQ','KeyE'].includes(e.code)){e.preventDefault();if(e.code==='Space'){if(!e.repeat)capture();}else keys.add(e.code);}});addEventListener('keyup',e=>keys.delete(e.code));addEventListener('blur',()=>keys.clear());document.querySelectorAll('dialog').forEach(d=>{d.addEventListener('close',()=>keys.clear());d.addEventListener('click',e=>{if(e.target===d){const r=d.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)d.close();}});});
 party = createParty({
   scoreShot: scoreRemoteShot,
+  onRoomState: state => game?.onRoomState(state),
   applyLocation: id => selectLocation(id),
   getLocation: () => currentLocation,
   applyMission: task => { practiceTask=null; showTaskMarker(task);$('practiceHint').hidden=true; },
@@ -203,13 +206,14 @@ party = createParty({
   toast,
   clearKeys: () => keys.clear(),
 });
+game = createGameShell({getRoom:()=>party,clearKeys:()=>keys.clear(),resetCamera:()=>{practiceTask=null;showTaskMarker(null);reset();},toast});
 const clock = new THREE.Clock();
 let moveElapsed = 0;
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), .05);
   moveElapsed += dt;
-  if (!document.querySelector('dialog[open]') && keys.size) {
+  if (game.canOperate && keys.size) {
     if (party.active && party.isModel) {
       if (moveElapsed >= .09) {
         const dx = (Number(keys.has('KeyD')) - Number(keys.has('KeyA'))) * .14;
@@ -230,7 +234,8 @@ function animate() {
       if(next.y>=.15&&next.y<12&&Math.hypot(next.x,next.z)<19){camera.position.add(movement);controls.target.add(movement);}
     }
   }
-  controls.update();clampAboveGround(camera,controls.target);
+  controls.enabled=game.canOperate;controls.autoRotate=game.isTitle;controls.autoRotateSpeed=.3;
+  if(game.canOperate||game.isTitle)controls.update();clampAboveGround(camera,controls.target);
   const height=camera.position.y.toFixed(2);if($('cameraHeightValue').textContent!==height+' m'){$('cameraHeightValue').textContent=height+' m';$('cameraHeight').value=height;}
   render();
 }
